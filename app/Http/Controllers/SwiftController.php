@@ -2,14 +2,17 @@
 
 namespace App\Http\Controllers;
 
+use DateTime;
+use DateTimeZone;
 use GuzzleHttp\Psr7\Stream;
-use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use JetBrains\PhpStorm\NoReturn;
 use OpenStack\ObjectStore\v1\Models\StorageObject;
 use OpenStack\OpenStack;
 use OpenStack\ObjectStore\v1\Models\Container;
 use Exception;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class SwiftController extends Controller
 {
@@ -39,21 +42,10 @@ class SwiftController extends Controller
 
     public function objectStorageConnection(): array|string
     {
-        $containerName = 'DevContainer';
-        dd($this->downloadObject($containerName, 'Test') );
-//        $containerName = '100free';
-        $objectStore = $this->openStack->objectStoreV1();
-        $metadata = [
-            'Access-Control-Allow-Origin' => '*',
-            'Access-Control-Allow-Methods' => 'GET, PUT, POST, DELETE, OPTIONS',
-            'Access-Control-Allow-Headers' => 'Content-Type, X-Auth-Token, Origin, Authorization',
-            'read' => '.r:*',
-            'X-Container-Read' => '.r:*'
-        ];
-
+        set_time_limit(0);
+        $containerName = 'SeptemDevContainer';
         try {
             return $this->fileVerification($containerName);
-            dd($this->mergeMetaData($containerName));
         } catch (Exception $e) {
             return $e->getMessage();
         }
@@ -74,7 +66,6 @@ class SwiftController extends Controller
     public function getSingleContainer($containerName): Container|string {
         $openStackService = $this->openStack->objectStoreV1();
         try {
-//            dd($openStackService->getContainer($containerName)->getMetadata());
             return $openStackService->getContainer($containerName);
         } catch(Exception $e) {
             return $e->getMessage();
@@ -111,66 +102,61 @@ class SwiftController extends Controller
             return $e->getMessage();
         }
     }
+
     public function getObject($containerName, $objectName): StorageObject|string
     {
         set_time_limit(0);
         $openStackService = $this->openStack->objectStoreV1();
         try {
-            $container = $openStackService->getContainer($containerName);
-//            $metadata = [
-//                'Access-Control-Allow-Origin' => '*',
-//                'Access-Control-Allow-Methods' => 'GET, PUT, POST, DELETE, OPTIONS',
-//                'Access-Control-Allow-Headers' => 'Content-Type, X-Auth-Token, Origin, Authorization',
-//            ];
-//            $openStackService->getContainer($containerName)->getObject($objectName)->mergeMetadata($metadata);
-            $object = $openStackService->getContainer($containerName)->getObject($objectName);
-//            dd($object->getPublicUri());
-//            dd($openStackService->getContainer($containerName)->getMetadata());
-            $file = $openStackService->getContainer($containerName)->getObject($objectName)->download();
-//            $response = $object->download(['saveAs' => storage_path('/app/public/server/file.mp4')]);
-//            dd($file);
-            dd(Storage::put('/public/server/video.mp4', $object->download()->getContents()));
-            return 'success';
+            return $openStackService->getContainer($containerName)->getObject($objectName);
         } catch (Exception $e) {
             return $e->getMessage();
         }
     }
 
-    public function listAllObjects($containerName): array|string
+    public function listAllObjects($containerName = null): array|string
     {
+        $containerName = ($containerName == null) ? 'SeptemDevContainer' : $containerName;
         $openStackService = $this->openStack->objectStoreV1();
         try {
-            $containerInfo = array();
+            $objectInfo = array();
             $container = $openStackService->getContainer($containerName);
             foreach ($container->listObjects() as $object) {
-                $containerInfo[] = $object;
+                $objectInfo[] = $object;
             }
-            return $containerInfo;
+            return $objectInfo;
         } catch (Exception $e){
             return $e->getMessage();
         }
     }
 
-    public function downloadObject($containerName, $objectName): StorageObject|string|array
+    public function downloadObject($containerName, $objectName, $objectExtension): StorageObject|string|array
     {
         set_time_limit(0);
-        ini_set('memory_limit', '100M');
         $openStackService = $this->openStack->objectStoreV1();
         try {
-//            dd($openStackService->getContainer($containerName)->getObject($objectName)
-//                ->download());
-            $publicUri = $openStackService->getContainer($containerName)
-                ->getObject($objectName)->download();
-            dd($publicUri->getContents());
-            dd(File::copy($publicUri->getContents(), public_path($objectName)));
-            return File::copy($publicUri, public_path($objectName));
+            $publicUri = $openStackService->getContainer($containerName)->getObject($objectName);
+            $objectContents = $publicUri->download();
+            return Storage::put('/public/server/' . $objectName . '.' .$objectExtension, $objectContents);
         } catch (Exception $e) {
             return $e->getMessage();
         }
     }
 
-    public function getAllFilesFromLocal(): array
+    public function getAllFilesFromLocal(): int|array
     {
+//        $allFiles = Storage::allFiles('public/server/');
+//        $allFilesWithDate = array();
+//        $i = 0;
+//        foreach ($allFiles as $file) {
+//            $fileDate = Storage::lastModified($file);
+//            $lastModified = DateTime::createFromFormat("U", $fileDate);
+//            $lastModified->setTimezone(new DateTimeZone('UTC'));
+//            $allFilesWithDate[$i]['name'] = $file;
+//            $allFilesWithDate[$i]['date'] = $lastModified;
+//            $i++;
+//        }
+//        return $allFilesWithDate;
         return Storage::allFiles('public/server/');
     }
 
@@ -199,6 +185,7 @@ class SwiftController extends Controller
 
     public function fileVerification($containerName): string|array
     {
+        set_time_limit(0);
         try {
             $localFiles = $this->getAllFilesFromLocal();
             $serverFiles = $this->getAllFilesFromServer($containerName);
@@ -217,16 +204,17 @@ class SwiftController extends Controller
             $localObjects = array_diff($localFileName, $serverFileName);
             $serverObjects = array_diff($serverFileName, $localFileName);
             $differenceArray = array_merge($localObjects, $serverObjects);
-
             $response = array();
+            $j = 0;
             foreach ($differenceArray as $objName) {
                 $explodedObjectName = explode('.', $objName);
                 if(!in_array($objName, $serverFileName)) {
-                    $response[] = $this->createObject($containerName, $explodedObjectName[0], $explodedObjectName[1]);
+                    $response[$j]['response'] = $this->createObject($containerName, $explodedObjectName[0], $explodedObjectName[1]);
                 }
                 if(!in_array($objName, $localFileName)) {
-                    $response[] = $this->downloadObject($containerName, $explodedObjectName[0]);
+                    $response[$j]['response'] = $this->downloadObject($containerName, $explodedObjectName[0], $explodedObjectName[1]);
                 }
+                $j++;
             }
             return $response;
         } catch (Exception $e) {
@@ -281,5 +269,24 @@ class SwiftController extends Controller
         } catch (Exception $e) {
             return $e->getMessage();
         }
+    }
+
+    public function videoStream($containerName = null, $objectName = null): StreamedResponse
+    {
+        $containerName = ($containerName == null) ? 'SeptemDevContainer' : $containerName;
+        $objectName = ($objectName == null) ? 'video' : $objectName;
+        $objectStore = $this->openStack->objectStoreV1();
+
+        $object = $objectStore->getContainer($containerName)
+            ->getObject($objectName);
+//            ->download(['requestOptions' => ['stream' => true]]);
+
+        $stream = $object->download();
+        $response = new StreamedResponse();
+        $response->setCallback(function () use ($stream) {
+            echo $stream->getContents();
+        });
+        $response->headers->set('Content-Type', 'video/mp4');
+        return $response;
     }
 }

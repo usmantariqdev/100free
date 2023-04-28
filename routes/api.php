@@ -19,5 +19,10 @@ Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
     return $request->user();
 });
 
+Route::get('/getAllContainers', [SwiftController::class, 'listAllContainers']);
+Route::get('/getAllObjects', [SwiftController::class, 'listAllObjects']);
+
 Route::get('/connect', [SwiftController::class, 'objectStorageConnection']);
 Route::get('/upload-file', [SwiftController::class, 'uploadFile']);
+Route::get('/getLocalFiles', [SwiftController::class, 'getAllFilesFromLocal']);
+Route::get('/playVideo', [SwiftController::class, 'videoStream']);
